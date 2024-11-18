@@ -5,5 +5,5 @@ edition = "2021"
 authors = ["Dmitri Tchebotarev <dmitri@tchebotarev.com>"]
 license-file = "LICENSE"
 description = "Small program to display last N lines of output."
-repository = "github.com/DTchebotarev/ttail"
+repository = "https://github.com/DTchebotarev/ttail"
 readme = "README.md"
