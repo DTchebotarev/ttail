@@ -1,3 +1,10 @@
+## [0.3.3] - 2026-03-16
+
+### Changed
+- Simplified CI publish script: just try `cargo publish`, treat "already exists" as success
+- Removed flaky `check_version.sh` crates.io API check
+- Auto-tag workflow uses PAT to trigger release pipeline
+
 ## [0.3.2] - 2026-03-16
 
 ### Added
