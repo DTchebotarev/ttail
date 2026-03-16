@@ -2,6 +2,7 @@ use std::io::{self, BufRead, stdout, Write};
 use ttail::LineBuffer;
 
 fn clear_lines(num_lines: usize) {
+    print!("\x1B[0m");
     for _ in 0..num_lines {
         print!("\x1B[1A");
         print!("\x1B[2K");
