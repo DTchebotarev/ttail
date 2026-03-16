@@ -101,10 +101,10 @@ impl AnsiState {
         if self.hidden { codes.push("8".into()); }
         if self.strikethrough { codes.push("9".into()); }
         if let Some(ref c) = self.fg {
-            Self::color_to_codes(c, &mut codes);
+            Self::color_to_codes(c, 38, &mut codes);
         }
         if let Some(ref c) = self.bg {
-            Self::color_to_codes(c, &mut codes);
+            Self::color_to_codes(c, 48, &mut codes);
         }
         if codes.is_empty() {
             String::new()
@@ -115,19 +115,11 @@ impl AnsiState {
         }
     }
 
-    fn color_to_codes(color: &Color, codes: &mut Vec<String>) {
+    fn color_to_codes(color: &Color, extended_prefix: u8, codes: &mut Vec<String>) {
         match color {
             Color::Basic(n) => codes.push(n.to_string()),
-            Color::Palette(n) => {
-                // Determine if fg (38) or bg (48) from the original code context
-                // Basic codes 30-37/90-97 are fg, 40-47/100-107 are bg
-                // For palette, we need to check if this is stored as fg or bg
-                // This is handled by the caller context, so we just emit the number
-                codes.push(format!("5;{n}"));
-            }
-            Color::Rgb(r, g, b) => {
-                codes.push(format!("2;{r};{g};{b}"));
-            }
+            Color::Palette(n) => codes.push(format!("{extended_prefix};5;{n}")),
+            Color::Rgb(r, g, b) => codes.push(format!("{extended_prefix};2;{r};{g};{b}")),
         }
     }
 
