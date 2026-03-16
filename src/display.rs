@@ -35,11 +35,11 @@ pub fn draw_collapsed(
     }
     let status = if input_done {
         format!(
-            "\x1B[2m[Tab: expand | {} lines | done]\x1B[0m",
+            "\x1B[0;2m[Tab: expand | {} lines | done]\x1B[0m",
             buf.total_count()
         )
     } else {
-        format!("\x1B[2m[Tab: expand | {} lines]\x1B[0m", buf.total_count())
+        format!("\x1B[0;2m[Tab: expand | {} lines]\x1B[0m", buf.total_count())
     };
     write_line(out, &status, raw_mode);
     out.flush().ok();
@@ -69,7 +69,7 @@ pub fn draw_expanded(
     };
     let done_indicator = if input_done { " | done" } else { "" };
     let status = format!(
-        "\x1B[2m[Tab: collapse | {}-{} of {}{}{}]\x1B[0m",
+        "\x1B[0;2m[Tab: collapse | {}-{} of {}{}{}]\x1B[0m",
         scroll_offset + 1,
         end,
         total,

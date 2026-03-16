@@ -45,12 +45,12 @@ fn draw_collapsed_with_countdown(
     }
     let status = match countdown {
         Some(s) => format!(
-            "\x1B[2m[Tab: expand | {} lines | done | exiting in {}s]\x1B[0m",
+            "\x1B[0;2m[Tab: expand | {} lines | done | exiting in {}s]\x1B[0m",
             buf.total_count(),
             s,
         ),
         None => format!(
-            "\x1B[2m[Tab: expand | {} lines | done]\x1B[0m",
+            "\x1B[0;2m[Tab: expand | {} lines | done]\x1B[0m",
             buf.total_count(),
         ),
     };
