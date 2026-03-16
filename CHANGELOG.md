@@ -1,3 +1,41 @@
+## [0.3.2] - 2026-03-16
+
+### Added
+- `-h`/`--help` flag support (exits 0; no-args usage exits 1)
+- cargo-dist configuration for automated GitHub Releases
+- Homebrew tap (`brew install DTchebotarev/tap/ttail`)
+- Shell installer for GitHub Releases
+
+### Changed
+- Extracted usage text into `print_usage()` to avoid duplication
+- Updated README with Homebrew and shell installer instructions
+
+## [0.3.1] - 2026-03-16
+
+### Changed
+- Eliminate heap allocations in ANSI parsing hot path (stack array for `parse_sgr_params`, direct string writes in `to_escape`)
+- Remove intermediate `Vec<&str>` in display methods, batch `clear_lines` into single write
+- Deduplicate Line/PtyOutput draw logic and unify countdown/collapsed draw functions
+- 23–61% faster across all benchmarks
+
+### Added
+- Cap VecDeque at 10k lines with automatic disk spill for overflow (no data loss)
+- Updated README with features, controls, and performance benchmarks
+
+## [0.3.0] - 2026-03-16
+
+### Added
+- Interactive expand/collapse toggle (Tab)
+- Expanded mode navigation: ↑/↓/j/k, PgUp/PgDn, Home/End, g/G
+- PTY wrapper mode: `ttail command [args...]` spawns child in a pseudo-terminal
+- Countdown auto-exit timer after input completes (configurable via `TTAIL_COUNTDOWN_SECS`)
+- Non-interactive fallback when no tty is available (CI, piped output)
+- Status line showing line count, scroll position, and done state
+
+### Changed
+- Dropped `crossterm` dependency in favor of direct raw mode / key parsing via `libc`
+- `LineBuffer` retains all lines; windowed display via `display_range()`
+
 ## [0.2.0] - 2026-03-15
 
 ### Added
