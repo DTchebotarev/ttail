@@ -71,8 +71,6 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
     let mut countdown: Option<u8> = None;
     let mut pty_line_remainder: Vec<u8> = Vec::new();
 
-    let is_pty = pty.is_some();
-
     loop {
         let event = if let Some(remaining) = countdown {
             if remaining == 0 {
@@ -254,12 +252,7 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
             Event::InputDone => {
                 input_done = true;
 
-                if is_pty && mode == Mode::Collapsed {
-                    prev_drawn_lines = 0;
-                    first = true;
-                }
-
-                countdown = if is_pty { Some(countdown_secs()) } else { None };
+                countdown = Some(countdown_secs());
 
                 if mode == Mode::Collapsed {
                     if prev_drawn_lines > 0 {
