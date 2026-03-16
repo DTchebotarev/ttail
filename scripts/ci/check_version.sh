@@ -6,10 +6,11 @@ set -euo pipefail
 CRATE_NAME="ttail"
 
 LOCAL_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-PUBLISHED_VERSION=$(curl -s "https://crates.io/api/v1/crates/${CRATE_NAME}" | jq -r '.crate.max_version // ""')
+PUBLISHED_VERSION=$(curl -sS -A "ttail-ci (https://github.com/DTchebotarev/ttail)" "https://crates.io/api/v1/crates/${CRATE_NAME}" | jq -r '.crate.max_version // ""')
 
+# Default to not publishing if we can't determine published version
 CHANGED="false"
-if [ "$LOCAL_VERSION" != "$PUBLISHED_VERSION" ]; then
+if [ -n "$PUBLISHED_VERSION" ] && [ "$LOCAL_VERSION" != "$PUBLISHED_VERSION" ]; then
   CHANGED="true"
 fi
 
