@@ -11,3 +11,7 @@ readme = "README.md"
 keywords = ["terminal", "tail", "log", "cli", "buffer"]
 categories = ["command-line-utilities"]
 rust-version = "1.85"
+
+[[bench]]
+name = "line_buffer"
+harness = false
