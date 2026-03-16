@@ -1,6 +1,6 @@
 [package]
 name = "ttail"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Dmitri Tchebotarev <dmitri@tchebotarev.com>"]
 license = "MIT"
@@ -13,8 +13,8 @@ categories = ["command-line-utilities"]
 rust-version = "1.85"
 
 [dependencies]
-crossterm = "0.29"
 libc = "0.2"
+signal-hook = "0.3"
 
 [[bench]]
 name = "line_buffer"
