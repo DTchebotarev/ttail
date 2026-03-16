@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 use std::fmt::Write;
+use std::io::Write as IoWrite;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct AnsiState {
-    reset: bool,
     bold: bool,
     dim: bool,
     italic: bool,
@@ -91,50 +92,71 @@ impl AnsiState {
     }
 
     pub fn to_escape(&self) -> String {
-        let mut codes: Vec<String> = Vec::new();
-        if self.bold { codes.push("1".into()); }
-        if self.dim { codes.push("2".into()); }
-        if self.italic { codes.push("3".into()); }
-        if self.underline { codes.push("4".into()); }
-        if self.blink { codes.push("5".into()); }
-        if self.reverse { codes.push("7".into()); }
-        if self.hidden { codes.push("8".into()); }
-        if self.strikethrough { codes.push("9".into()); }
+        let mut out = String::new();
+        let mut sep = false;
+
+        macro_rules! push_code {
+            ($val:expr) => {{
+                if sep { out.push(';'); }
+                write!(out, "{}", $val).unwrap();
+                sep = true;
+            }};
+        }
+
+        if self.bold { push_code!("1"); }
+        if self.dim { push_code!("2"); }
+        if self.italic { push_code!("3"); }
+        if self.underline { push_code!("4"); }
+        if self.blink { push_code!("5"); }
+        if self.reverse { push_code!("7"); }
+        if self.hidden { push_code!("8"); }
+        if self.strikethrough { push_code!("9"); }
         if let Some(ref c) = self.fg {
-            Self::color_to_codes(c, 38, &mut codes);
+            Self::write_color(&mut out, c, 38, &mut sep);
         }
         if let Some(ref c) = self.bg {
-            Self::color_to_codes(c, 48, &mut codes);
+            Self::write_color(&mut out, c, 48, &mut sep);
         }
-        if codes.is_empty() {
+        if out.is_empty() {
             String::new()
         } else {
-            let mut out = String::new();
-            write!(out, "\x1B[{}m", codes.join(";")).unwrap();
-            out
+            format!("\x1B[{out}m")
         }
     }
 
-    fn color_to_codes(color: &Color, extended_prefix: u8, codes: &mut Vec<String>) {
+    fn write_color(out: &mut String, color: &Color, prefix: u8, sep: &mut bool) {
+        if *sep { out.push(';'); }
         match color {
-            Color::Basic(n) => codes.push(n.to_string()),
-            Color::Palette(n) => codes.push(format!("{extended_prefix};5;{n}")),
-            Color::Rgb(r, g, b) => codes.push(format!("{extended_prefix};2;{r};{g};{b}")),
+            Color::Basic(n) => write!(out, "{n}").unwrap(),
+            Color::Palette(n) => write!(out, "{prefix};5;{n}").unwrap(),
+            Color::Rgb(r, g, b) => write!(out, "{prefix};2;{r};{g};{b}").unwrap(),
         }
+        *sep = true;
     }
 
     pub fn is_empty(&self) -> bool {
-        *self == Self::default()
+        !self.bold && !self.dim && !self.italic && !self.underline
+            && !self.blink && !self.reverse && !self.hidden && !self.strikethrough
+            && self.fg.is_none() && self.bg.is_none()
     }
 }
 
-fn parse_sgr_params(seq: &str) -> Vec<u8> {
+fn parse_sgr_params(seq: &str) -> ([u8; 16], usize) {
     if seq.is_empty() {
-        return vec![0];
+        let mut arr = [0u8; 16];
+        arr[0] = 0;
+        return (arr, 1);
     }
-    seq.split(';')
-        .filter_map(|s| s.parse::<u8>().ok())
-        .collect()
+    let mut arr = [0u8; 16];
+    let mut len = 0;
+    for s in seq.split(';') {
+        if len >= 16 { break; }
+        if let Ok(v) = s.parse::<u8>() {
+            arr[len] = v;
+            len += 1;
+        }
+    }
+    (arr, len)
 }
 
 pub fn update_ansi_state(state: &mut AnsiState, line: &str) {
@@ -153,8 +175,8 @@ pub fn update_ansi_state(state: &mut AnsiState, line: &str) {
             }
             if i < len && bytes[i] == b'm' {
                 let param_str = &line[start..i];
-                let params = parse_sgr_params(param_str);
-                state.apply_sgr(&params);
+                let (params, len) = parse_sgr_params(param_str);
+                state.apply_sgr(&params[..len]);
             }
             i += 1;
         } else {
@@ -166,15 +188,35 @@ pub fn update_ansi_state(state: &mut AnsiState, line: &str) {
 pub struct LineBuffer {
     lines: VecDeque<String>,
     window_size: usize,
+    max_history: usize,
     ansi_prefix: AnsiState,
+    spill_file: Option<std::fs::File>,
+    spill_path: Option<std::path::PathBuf>,
+    disk_line_count: usize,
+}
+
+impl Drop for LineBuffer {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.spill_path {
+            std::fs::remove_file(path).ok();
+        }
+    }
 }
 
 impl LineBuffer {
     pub fn new(window_size: usize) -> Self {
+        Self::with_max_history(window_size, 10_000)
+    }
+
+    pub fn with_max_history(window_size: usize, max_history: usize) -> Self {
         Self {
-            lines: VecDeque::new(),
+            lines: VecDeque::with_capacity(window_size.min(max_history)),
             window_size,
+            max_history,
             ansi_prefix: AnsiState::default(),
+            spill_file: None,
+            spill_path: None,
+            disk_line_count: 0,
         }
     }
 
@@ -185,6 +227,41 @@ impl LineBuffer {
             let idx = total - self.window_size - 1;
             update_ansi_state(&mut self.ansi_prefix, &self.lines[idx]);
         }
+        if self.lines.len() > self.max_history {
+            let evicted = self.lines.pop_front().unwrap();
+            self.spill_to_disk(&evicted);
+        }
+    }
+
+    fn spill_to_disk(&mut self, line: &str) {
+        if self.spill_file.is_none() {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("ttail-{}-{}.log", std::process::id(), id));
+            let file = std::fs::File::create(&path).expect("failed to create spill file");
+            self.spill_path = Some(path);
+            self.spill_file = Some(file);
+        }
+        if let Some(ref mut file) = self.spill_file {
+            writeln!(file, "{}", line).ok();
+        }
+        self.disk_line_count += 1;
+    }
+
+    fn read_disk_lines(&self, start: usize, count: usize) -> Vec<String> {
+        use std::io::{BufRead, BufReader};
+        let Some(ref path) = self.spill_path else {
+            return Vec::new();
+        };
+        let Ok(file) = std::fs::File::open(path) else {
+            return Vec::new();
+        };
+        BufReader::new(file)
+            .lines()
+            .skip(start)
+            .take(count)
+            .filter_map(|l| l.ok())
+            .collect()
     }
 
     pub fn visible_len(&self) -> usize {
@@ -192,7 +269,7 @@ impl LineBuffer {
     }
 
     pub fn total_count(&self) -> usize {
-        self.lines.len()
+        self.disk_line_count + self.lines.len()
     }
 
     pub fn all_lines(&self) -> &VecDeque<String> {
@@ -208,46 +285,70 @@ impl LineBuffer {
     pub fn display_lines(&self) -> Vec<String> {
         let total = self.lines.len();
         let start = total.saturating_sub(self.window_size);
-        let window: Vec<&str> = self.lines.range(start..).map(|s| s.as_str()).collect();
-        if window.is_empty() || self.ansi_prefix.is_empty() {
-            return window.into_iter().map(String::from).collect();
+        if self.ansi_prefix.is_empty() {
+            return self.lines.range(start..).map(|s| s.to_string()).collect();
         }
         let prefix = self.ansi_prefix.to_escape();
-        let mut result: Vec<String> = Vec::with_capacity(window.len());
-        result.push(format!("{}{}", prefix, window[0]));
-        for line in &window[1..] {
-            result.push((*line).to_string());
+        let mut result: Vec<String> = Vec::with_capacity(self.visible_len());
+        let mut first = true;
+        for line in self.lines.range(start..) {
+            if first {
+                result.push(format!("{prefix}{line}"));
+                first = false;
+            } else {
+                result.push(line.to_string());
+            }
         }
         result
     }
 
     pub fn display_range(&self, start: usize, count: usize) -> Vec<String> {
-        let total = self.lines.len();
+        let total = self.total_count();
         let end = (start + count).min(total);
         if start >= total {
             return Vec::new();
         }
 
-        // Compute ANSI state up to `start` by scanning all lines before it
+        // Compute ANSI state by scanning all lines before `start`
         let mut state = AnsiState::default();
-        for i in 0..start {
-            update_ansi_state(&mut state, &self.lines[i]);
+        if self.disk_line_count > 0 {
+            let disk_scan_end = start.min(self.disk_line_count);
+            if disk_scan_end > 0 {
+                for line in self.read_disk_lines(0, disk_scan_end) {
+                    update_ansi_state(&mut state, &line);
+                }
+            }
+        }
+        if start > self.disk_line_count {
+            let mem_scan_end = start - self.disk_line_count;
+            for i in 0..mem_scan_end {
+                update_ansi_state(&mut state, &self.lines[i]);
+            }
         }
 
-        let slice: Vec<&str> = self.lines.range(start..end).map(|s| s.as_str()).collect();
-        if slice.is_empty() {
+        // Collect lines in the display range from disk and/or memory
+        let mut raw_lines: Vec<String> = Vec::with_capacity(end - start);
+        if start < self.disk_line_count {
+            let disk_end = end.min(self.disk_line_count);
+            raw_lines.extend(self.read_disk_lines(start, disk_end - start));
+        }
+        if end > self.disk_line_count {
+            let mem_start = start.saturating_sub(self.disk_line_count);
+            let mem_end = end - self.disk_line_count;
+            for line in self.lines.range(mem_start..mem_end) {
+                raw_lines.push(line.to_string());
+            }
+        }
+
+        if raw_lines.is_empty() {
             return Vec::new();
         }
         if state.is_empty() {
-            return slice.into_iter().map(String::from).collect();
+            return raw_lines;
         }
         let prefix = state.to_escape();
-        let mut result: Vec<String> = Vec::with_capacity(slice.len());
-        result.push(format!("{}{}", prefix, slice[0]));
-        for line in &slice[1..] {
-            result.push((*line).to_string());
-        }
-        result
+        raw_lines[0] = format!("{prefix}{}", raw_lines[0]);
+        raw_lines
     }
 }
 
@@ -439,7 +540,6 @@ mod tests {
         buf.push("\x1B[31mred".to_string());
         buf.push("line 2".to_string());
         buf.push("line 3".to_string());
-        // Range starting at line 1 should carry red prefix
         let range = buf.display_range(1, 2);
         assert!(range[0].starts_with("\x1B[31m"));
         assert_eq!(range[0].ends_with("line 2"), true);
@@ -463,5 +563,47 @@ mod tests {
         buf.push("b".to_string());
         let range = buf.display_range(0, 100);
         assert_eq!(range, &["a", "b"]);
+    }
+
+    #[test]
+    fn max_history_caps_memory() {
+        let mut buf = LineBuffer::with_max_history(3, 10);
+        for i in 0..20 {
+            buf.push(format!("line {i}"));
+        }
+        assert_eq!(buf.total_count(), 20);
+        assert_eq!(buf.lines.len(), 10);
+        assert_eq!(buf.disk_line_count, 10);
+        assert_eq!(buf.visible_len(), 3);
+        assert_eq!(buf.window_lines(), &["line 17", "line 18", "line 19"]);
+    }
+
+    #[test]
+    fn disk_spill_lines_readable() {
+        let mut buf = LineBuffer::with_max_history(2, 5);
+        for i in 0..10 {
+            buf.push(format!("line {i}"));
+        }
+        assert_eq!(buf.disk_line_count, 5);
+        assert_eq!(buf.lines.len(), 5);
+        let range = buf.display_range(0, 3);
+        assert_eq!(range, &["line 0", "line 1", "line 2"]);
+        let range = buf.display_range(3, 4);
+        assert_eq!(range, &["line 3", "line 4", "line 5", "line 6"]);
+        let range = buf.display_range(7, 3);
+        assert_eq!(range, &["line 7", "line 8", "line 9"]);
+    }
+
+    #[test]
+    fn disk_spill_preserves_ansi_state() {
+        let mut buf = LineBuffer::with_max_history(2, 3);
+        buf.push("\x1B[31mred".to_string());
+        buf.push("line 2".to_string());
+        buf.push("line 3".to_string());
+        buf.push("line 4".to_string());
+        assert_eq!(buf.disk_line_count, 1);
+        let range = buf.display_range(1, 2);
+        assert!(range[0].starts_with("\x1B[31m"));
+        assert!(range[0].ends_with("line 2"));
     }
 }

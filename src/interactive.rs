@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use ttail::LineBuffer;
 
-use crate::display::{clear_lines, draw_collapsed, draw_expanded, write_line};
+use crate::display::{clear_lines, draw_collapsed, draw_expanded};
 use crate::event::{Event, KeyCode, Mode};
 use crate::pty::{self, PtyContext};
 use crate::term;
@@ -21,42 +21,41 @@ fn countdown_secs() -> u8 {
 fn extract_lines(remainder: &mut Vec<u8>, data: &[u8]) -> Vec<String> {
     remainder.extend_from_slice(data);
     let mut lines = Vec::new();
-    while let Some(pos) = remainder.iter().position(|&b| b == b'\n') {
-        let line_bytes: Vec<u8> = remainder.drain(..=pos).collect();
-        let s = String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]);
+    let mut start = 0;
+    while let Some(pos) = remainder[start..].iter().position(|&b| b == b'\n') {
+        let end = start + pos;
+        let s = String::from_utf8_lossy(&remainder[start..end]);
         lines.push(s.trim_end_matches('\r').to_string());
+        start = end + 1;
+    }
+    if start > 0 {
+        remainder.drain(..start);
     }
     lines
 }
 
-fn draw_collapsed_with_countdown(
+fn draw_after_push(
     out: &mut io::StdoutLock,
     buf: &LineBuffer,
-    prev_lines: usize,
-    first: bool,
-    countdown: Option<u8>,
-) -> usize {
-    if !first {
-        clear_lines(out, prev_lines);
+    mode: &Mode,
+    prev_drawn_lines: &mut usize,
+    first: &mut bool,
+    scroll_offset: &mut usize,
+    input_done: bool,
+) {
+    match mode {
+        Mode::Collapsed => {
+            *prev_drawn_lines = draw_collapsed(
+                out, buf, *prev_drawn_lines, *first, true, input_done, None,
+            );
+            *first = false;
+        }
+        Mode::Expanded => {
+            redraw_expanded_on_new_line(
+                out, buf, scroll_offset, prev_drawn_lines, input_done,
+            );
+        }
     }
-    let lines = buf.display_lines();
-    for l in &lines {
-        write_line(out, l, true);
-    }
-    let status = match countdown {
-        Some(s) => format!(
-            "\x1B[0;2m[Tab: expand | {} lines | done | exiting in {}s]\x1B[0m",
-            buf.total_count(),
-            s,
-        ),
-        None => format!(
-            "\x1B[0;2m[Tab: expand | {} lines | done]\x1B[0m",
-            buf.total_count(),
-        ),
-    };
-    write_line(out, &status, true);
-    out.flush().ok();
-    lines.len() + 1
 }
 
 pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
@@ -86,12 +85,8 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
                     }
                     if mode == Mode::Collapsed {
                         clear_lines(&mut out, prev_drawn_lines);
-                        prev_drawn_lines = draw_collapsed_with_countdown(
-                            &mut out,
-                            &buf,
-                            0,
-                            true,
-                            countdown,
+                        prev_drawn_lines = draw_collapsed(
+                            &mut out, &buf, 0, true, true, true, countdown,
                         );
                     }
                     continue;
@@ -108,29 +103,7 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
         match event {
             Event::Line(line) => {
                 buf.push(line.trim().to_string());
-
-                match mode {
-                    Mode::Collapsed => {
-                        prev_drawn_lines = draw_collapsed(
-                            &mut out,
-                            &buf,
-                            prev_drawn_lines,
-                            first,
-                            true,
-                            input_done,
-                        );
-                        first = false;
-                    }
-                    Mode::Expanded => {
-                        redraw_expanded_on_new_line(
-                            &mut out,
-                            &buf,
-                            &mut scroll_offset,
-                            &mut prev_drawn_lines,
-                            input_done,
-                        );
-                    }
-                }
+                draw_after_push(&mut out, &buf, &mode, &mut prev_drawn_lines, &mut first, &mut scroll_offset, input_done);
             }
 
             Event::PtyOutput(data) => {
@@ -141,29 +114,7 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
                 for line in new_lines {
                     buf.push(line.trim().to_string());
                 }
-
-                match mode {
-                    Mode::Collapsed => {
-                        prev_drawn_lines = draw_collapsed(
-                            &mut out,
-                            &buf,
-                            prev_drawn_lines,
-                            first,
-                            true,
-                            input_done,
-                        );
-                        first = false;
-                    }
-                    Mode::Expanded => {
-                        redraw_expanded_on_new_line(
-                            &mut out,
-                            &buf,
-                            &mut scroll_offset,
-                            &mut prev_drawn_lines,
-                            input_done,
-                        );
-                    }
-                }
+                draw_after_push(&mut out, &buf, &mode, &mut prev_drawn_lines, &mut first, &mut scroll_offset, input_done);
             }
 
             Event::Key(key) => {
@@ -193,7 +144,7 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
                             mode = Mode::Collapsed;
                             first = true;
                             prev_drawn_lines =
-                                draw_collapsed(&mut out, &buf, 0, true, true, input_done);
+                                draw_collapsed(&mut out, &buf, 0, true, true, input_done, None);
                         }
                     }
                     continue;
@@ -258,18 +209,9 @@ pub fn run_interactive(rx: mpsc::Receiver<Event>, pty: Option<PtyContext>) {
                     if prev_drawn_lines > 0 {
                         clear_lines(&mut out, prev_drawn_lines);
                     }
-                    if countdown.is_some() {
-                        prev_drawn_lines = draw_collapsed_with_countdown(
-                            &mut out,
-                            &buf,
-                            0,
-                            true,
-                            countdown,
-                        );
-                    } else {
-                        prev_drawn_lines =
-                            draw_collapsed(&mut out, &buf, 0, true, true, input_done);
-                    }
+                    prev_drawn_lines = draw_collapsed(
+                        &mut out, &buf, 0, true, true, input_done, countdown,
+                    );
                 } else {
                     clear_lines(&mut out, prev_drawn_lines);
                     let (_, rows) = term::terminal_size();
@@ -325,13 +267,14 @@ pub fn run_non_interactive() {
     let mut prev_drawn_lines: usize = 0;
 
     while let Some(Ok(line)) = input.next() {
-        if line.trim().is_empty() {
+        let trimmed = line.trim().to_string();
+        if trimmed.is_empty() {
             break;
         }
         if !first {
             clear_lines(&mut out, prev_drawn_lines);
         }
-        buf.push(line.trim().to_string());
+        buf.push(trimmed);
         let lines = buf.display_lines();
         for l in &lines {
             writeln!(out, "{}", l).ok();

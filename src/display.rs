@@ -11,10 +11,11 @@ pub fn write_line(out: &mut io::StdoutLock, line: &str, raw_mode: bool) {
 }
 
 pub fn clear_lines(out: &mut io::StdoutLock, num_lines: usize) {
-    write!(out, "\x1B[0m").ok();
+    let mut buf = String::from("\x1B[0m");
     for _ in 0..num_lines {
-        write!(out, "\x1B[1A\x1B[2K").ok();
+        buf.push_str("\x1B[1A\x1B[2K");
     }
+    write!(out, "{buf}").ok();
     out.flush().ok();
 }
 
@@ -25,6 +26,7 @@ pub fn draw_collapsed(
     first: bool,
     raw_mode: bool,
     input_done: bool,
+    countdown: Option<u8>,
 ) -> usize {
     if !first {
         clear_lines(out, prev_lines);
@@ -33,13 +35,16 @@ pub fn draw_collapsed(
     for l in &lines {
         write_line(out, l, raw_mode);
     }
-    let status = if input_done {
-        format!(
+    let status = match countdown {
+        Some(s) => format!(
+            "\x1B[0;2m[Tab: expand | {} lines | done | exiting in {}s]\x1B[0m",
+            buf.total_count(), s,
+        ),
+        None if input_done => format!(
             "\x1B[0;2m[Tab: expand | {} lines | done]\x1B[0m",
             buf.total_count()
-        )
-    } else {
-        format!("\x1B[0;2m[Tab: expand | {} lines]\x1B[0m", buf.total_count())
+        ),
+        None => format!("\x1B[0;2m[Tab: expand | {} lines]\x1B[0m", buf.total_count()),
     };
     write_line(out, &status, raw_mode);
     out.flush().ok();
