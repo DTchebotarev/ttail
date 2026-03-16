@@ -1,9 +1,13 @@
 [package]
 name = "ttail"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
 authors = ["Dmitri Tchebotarev <dmitri@tchebotarev.com>"]
-license-file = "LICENSE"
+license = "MIT"
 description = "Small program to display last N lines of output."
 repository = "https://github.com/DTchebotarev/ttail"
+homepage = "https://github.com/DTchebotarev/ttail"
 readme = "README.md"
+keywords = ["terminal", "tail", "log", "cli", "buffer"]
+categories = ["command-line-utilities"]
+rust-version = "1.85"
