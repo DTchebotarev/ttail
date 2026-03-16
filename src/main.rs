@@ -1,4 +1,5 @@
-use std::io::{self, BufRead, Write, stdout};
+use std::io::{self, BufRead, BufReader, Write, stdout};
+use std::os::unix::io::FromRawFd;
 use std::sync::mpsc;
 use std::thread;
 
@@ -84,6 +85,26 @@ fn draw_expanded(out: &mut io::StdoutLock, buf: &LineBuffer, scroll_offset: usiz
 
 fn has_tty() -> bool {
     std::fs::File::open("/dev/tty").is_ok()
+}
+
+/// Dup stdin (the pipe) and reopen stdin from /dev/tty so crossterm
+/// reads key events from the terminal. Returns a BufReader over the
+/// original piped stdin fd.
+fn steal_stdin() -> BufReader<std::fs::File> {
+    use std::os::unix::io::AsRawFd;
+
+    let stdin_fd = io::stdin().as_raw_fd();
+    let duped_fd = unsafe { libc::dup(stdin_fd) };
+    assert!(duped_fd >= 0, "failed to dup stdin");
+
+    // Reopen stdin from /dev/tty
+    let tty = std::fs::File::open("/dev/tty").expect("failed to open /dev/tty");
+    let tty_fd = tty.as_raw_fd();
+    unsafe { libc::dup2(tty_fd, stdin_fd); }
+    drop(tty);
+
+    let pipe_file = unsafe { std::fs::File::from_raw_fd(duped_fd) };
+    BufReader::new(pipe_file)
 }
 
 fn run_interactive(rx: mpsc::Receiver<Event>) {
@@ -223,13 +244,16 @@ fn main() {
         return;
     }
 
+    // Dup the piped stdin and reopen stdin from /dev/tty so crossterm
+    // reads key events from the terminal.
+    let pipe_reader = steal_stdin();
+
     let (tx, rx) = mpsc::channel();
 
+    // Stdin reader thread — reads from the original piped fd
     let tx_stdin = tx.clone();
     thread::spawn(move || {
-        let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines() {
+        for line in pipe_reader.lines() {
             match line {
                 Ok(l) => {
                     if tx_stdin.send(Event::Line(l)).is_err() {
@@ -242,6 +266,7 @@ fn main() {
         tx_stdin.send(Event::InputDone).ok();
     });
 
+    // TTY key reader thread — crossterm now reads from /dev/tty via stdin
     let tx_key = tx;
     thread::spawn(move || {
         loop {

@@ -273,6 +273,7 @@ name = "ttail"
 version = "0.2.0"
 dependencies = [
  "crossterm",
+ "libc",
 ]
 
 [[package]]

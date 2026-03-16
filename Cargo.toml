@@ -14,6 +14,7 @@ rust-version = "1.85"
 
 [dependencies]
 crossterm = "0.29"
+libc = "0.2"
 
 [[bench]]
 name = "line_buffer"
