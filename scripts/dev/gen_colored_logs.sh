@@ -30,7 +30,7 @@ DIM='\x1B[2m'
 ITALIC='\x1B[3m'
 UNDERLINE='\x1B[4m'
 
-delay() { sleep 0.05; }
+delay() { sleep 0.15; }
 
 # Phase 1: Bold red, no reset between lines
 printf "${RED}[Phase 1] Bold red starts here\n"; delay
