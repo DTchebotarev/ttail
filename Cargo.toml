@@ -12,6 +12,9 @@ keywords = ["terminal", "tail", "log", "cli", "buffer"]
 categories = ["command-line-utilities"]
 rust-version = "1.85"
 
+[dependencies]
+crossterm = "0.29"
+
 [[bench]]
 name = "line_buffer"
 harness = false
