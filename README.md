@@ -16,7 +16,14 @@ ANSI color codes are preserved — even when the line that set the color has scr
 ## Install
 
 ```sh
+# Homebrew (macOS/Linux)
+brew install DTchebotarev/tap/ttail
+
+# Cargo
 cargo install ttail
+
+# Shell installer (from GitHub Releases)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/DTchebotarev/ttail/releases/latest/download/ttail-installer.sh | sh
 ```
 
 ## Usage
