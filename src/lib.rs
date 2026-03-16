@@ -165,45 +165,86 @@ pub fn update_ansi_state(state: &mut AnsiState, line: &str) {
 
 pub struct LineBuffer {
     lines: VecDeque<String>,
-    capacity: usize,
+    window_size: usize,
     ansi_prefix: AnsiState,
 }
 
 impl LineBuffer {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(window_size: usize) -> Self {
         Self {
             lines: VecDeque::new(),
-            capacity,
+            window_size,
             ansi_prefix: AnsiState::default(),
         }
     }
 
     pub fn push(&mut self, line: String) {
         self.lines.push_back(line);
-        if self.lines.len() > self.capacity {
-            if let Some(evicted) = self.lines.pop_front() {
-                update_ansi_state(&mut self.ansi_prefix, &evicted);
-            }
+        let total = self.lines.len();
+        if total > self.window_size {
+            let idx = total - self.window_size - 1;
+            update_ansi_state(&mut self.ansi_prefix, &self.lines[idx]);
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn visible_len(&self) -> usize {
+        self.lines.len().min(self.window_size)
+    }
+
+    pub fn total_count(&self) -> usize {
         self.lines.len()
     }
 
-    pub fn lines(&self) -> Vec<&str> {
-        self.lines.iter().map(|s| s.as_str()).collect()
+    pub fn all_lines(&self) -> &VecDeque<String> {
+        &self.lines
+    }
+
+    pub fn window_lines(&self) -> Vec<&str> {
+        let total = self.lines.len();
+        let start = total.saturating_sub(self.window_size);
+        self.lines.range(start..).map(|s| s.as_str()).collect()
     }
 
     pub fn display_lines(&self) -> Vec<String> {
-        let lines: Vec<&str> = self.lines.iter().map(|s| s.as_str()).collect();
-        if lines.is_empty() || self.ansi_prefix.is_empty() {
-            return lines.into_iter().map(String::from).collect();
+        let total = self.lines.len();
+        let start = total.saturating_sub(self.window_size);
+        let window: Vec<&str> = self.lines.range(start..).map(|s| s.as_str()).collect();
+        if window.is_empty() || self.ansi_prefix.is_empty() {
+            return window.into_iter().map(String::from).collect();
         }
         let prefix = self.ansi_prefix.to_escape();
-        let mut result: Vec<String> = Vec::with_capacity(lines.len());
-        result.push(format!("{}{}", prefix, lines[0]));
-        for line in &lines[1..] {
+        let mut result: Vec<String> = Vec::with_capacity(window.len());
+        result.push(format!("{}{}", prefix, window[0]));
+        for line in &window[1..] {
+            result.push((*line).to_string());
+        }
+        result
+    }
+
+    pub fn display_range(&self, start: usize, count: usize) -> Vec<String> {
+        let total = self.lines.len();
+        let end = (start + count).min(total);
+        if start >= total {
+            return Vec::new();
+        }
+
+        // Compute ANSI state up to `start` by scanning all lines before it
+        let mut state = AnsiState::default();
+        for i in 0..start {
+            update_ansi_state(&mut state, &self.lines[i]);
+        }
+
+        let slice: Vec<&str> = self.lines.range(start..end).map(|s| s.as_str()).collect();
+        if slice.is_empty() {
+            return Vec::new();
+        }
+        if state.is_empty() {
+            return slice.into_iter().map(String::from).collect();
+        }
+        let prefix = state.to_escape();
+        let mut result: Vec<String> = Vec::with_capacity(slice.len());
+        result.push(format!("{}{}", prefix, slice[0]));
+        for line in &slice[1..] {
             result.push((*line).to_string());
         }
         result
@@ -215,57 +256,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn buffer_stays_within_capacity() {
+    fn buffer_stays_within_window() {
         let mut buf = LineBuffer::new(3);
         for i in 0..5 {
             buf.push(format!("line {i}"));
         }
-        assert_eq!(buf.len(), 3);
-        assert_eq!(buf.lines(), &["line 2", "line 3", "line 4"]);
+        assert_eq!(buf.visible_len(), 3);
+        assert_eq!(buf.total_count(), 5);
+        assert_eq!(buf.window_lines(), &["line 2", "line 3", "line 4"]);
     }
 
     #[test]
-    fn buffer_under_capacity() {
+    fn buffer_under_window() {
         let mut buf = LineBuffer::new(10);
         buf.push("a".to_string());
         buf.push("b".to_string());
-        assert_eq!(buf.len(), 2);
-        assert_eq!(buf.lines(), &["a", "b"]);
+        assert_eq!(buf.visible_len(), 2);
+        assert_eq!(buf.total_count(), 2);
+        assert_eq!(buf.window_lines(), &["a", "b"]);
     }
 
     #[test]
-    fn buffer_exact_capacity() {
+    fn buffer_exact_window() {
         let mut buf = LineBuffer::new(3);
         buf.push("a".to_string());
         buf.push("b".to_string());
         buf.push("c".to_string());
-        assert_eq!(buf.len(), 3);
-        assert_eq!(buf.lines(), &["a", "b", "c"]);
+        assert_eq!(buf.visible_len(), 3);
+        assert_eq!(buf.window_lines(), &["a", "b", "c"]);
     }
 
     #[test]
-    fn buffer_drops_oldest() {
+    fn window_shows_latest() {
         let mut buf = LineBuffer::new(2);
         buf.push("first".to_string());
         buf.push("second".to_string());
         buf.push("third".to_string());
-        assert_eq!(buf.lines(), &["second", "third"]);
+        assert_eq!(buf.window_lines(), &["second", "third"]);
     }
 
     #[test]
-    fn buffer_capacity_one() {
+    fn buffer_window_one() {
         let mut buf = LineBuffer::new(1);
         buf.push("a".to_string());
         buf.push("b".to_string());
-        assert_eq!(buf.len(), 1);
-        assert_eq!(buf.lines(), &["b"]);
+        assert_eq!(buf.visible_len(), 1);
+        assert_eq!(buf.window_lines(), &["b"]);
     }
 
     #[test]
     fn empty_buffer() {
         let buf = LineBuffer::new(10);
-        assert_eq!(buf.len(), 0);
-        assert!(buf.lines().is_empty());
+        assert_eq!(buf.visible_len(), 0);
+        assert_eq!(buf.total_count(), 0);
+        assert!(buf.window_lines().is_empty());
+    }
+
+    #[test]
+    fn all_lines_retained() {
+        let mut buf = LineBuffer::new(3);
+        for i in 0..100 {
+            buf.push(format!("line {i}"));
+        }
+        assert_eq!(buf.total_count(), 100);
+        assert_eq!(buf.visible_len(), 3);
+        assert_eq!(buf.all_lines()[0], "line 0");
+        assert_eq!(buf.all_lines()[99], "line 99");
     }
 
     // ANSI state tracking tests
@@ -375,5 +431,37 @@ mod tests {
         update_ansi_state(&mut state, "\x1B[31mhello");
         update_ansi_state(&mut state, "\x1B[0mworld");
         assert!(state.is_empty());
+    }
+
+    #[test]
+    fn display_range_with_ansi() {
+        let mut buf = LineBuffer::new(2);
+        buf.push("\x1B[31mred".to_string());
+        buf.push("line 2".to_string());
+        buf.push("line 3".to_string());
+        // Range starting at line 1 should carry red prefix
+        let range = buf.display_range(1, 2);
+        assert!(range[0].starts_with("\x1B[31m"));
+        assert_eq!(range[0].ends_with("line 2"), true);
+        assert_eq!(range[1], "line 3");
+    }
+
+    #[test]
+    fn display_range_from_start() {
+        let mut buf = LineBuffer::new(2);
+        buf.push("line 0".to_string());
+        buf.push("line 1".to_string());
+        buf.push("line 2".to_string());
+        let range = buf.display_range(0, 2);
+        assert_eq!(range, &["line 0", "line 1"]);
+    }
+
+    #[test]
+    fn display_range_clamps_to_total() {
+        let mut buf = LineBuffer::new(10);
+        buf.push("a".to_string());
+        buf.push("b".to_string());
+        let range = buf.display_range(0, 100);
+        assert_eq!(range, &["a", "b"]);
     }
 }

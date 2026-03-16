@@ -62,6 +62,14 @@ fn main() {
         std::hint::black_box(&state);
     });
 
+    bench("display_range_middle", iterations, || {
+        let mut buf = LineBuffer::new(10);
+        for i in 0..1000 {
+            buf.push(format!("\x1B[32m[INFO]\x1B[0m line {i}"));
+        }
+        std::hint::black_box(buf.display_range(500, 20));
+    });
+
     bench("push_and_display_realistic", iterations, || {
         let mut buf = LineBuffer::new(10);
         let lines = [
