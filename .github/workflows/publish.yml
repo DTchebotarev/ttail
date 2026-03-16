@@ -19,19 +19,10 @@ jobs:
 
       - name: Check if version is new
         id: version
-        run: |
-          LOCAL_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          PUBLISHED_VERSION=$(curl -s https://crates.io/api/v1/crates/ttail | jq -r '.crate.max_version // ""')
-          echo "local=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
-          echo "published=$PUBLISHED_VERSION" >> "$GITHUB_OUTPUT"
-          if [ "$LOCAL_VERSION" != "$PUBLISHED_VERSION" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: ./scripts/ci/check_version.sh
 
       - name: Publish to crates.io
         if: steps.version.outputs.changed == 'true'
-        run: cargo publish
+        run: ./scripts/ci/publish.sh
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
