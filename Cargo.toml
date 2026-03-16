@@ -1,6 +1,6 @@
 [package]
 name = "ttail"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Dmitri Tchebotarev <dmitri@tchebotarev.com>"]
 license = "MIT"
@@ -11,3 +11,7 @@ readme = "README.md"
 keywords = ["terminal", "tail", "log", "cli", "buffer"]
 categories = ["command-line-utilities"]
 rust-version = "1.85"
+
+[[bench]]
+name = "line_buffer"
+harness = false
