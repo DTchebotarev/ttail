@@ -16,18 +16,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
-      - name: Check if version changed
+      - name: Check if version is new
         id: version
         run: |
-          NEW_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          git show HEAD~1:Cargo.toml > /tmp/old_cargo.toml 2>/dev/null || true
-          OLD_VERSION=$(grep -m1 '^version' /tmp/old_cargo.toml | sed 's/.*"\(.*\)"/\1/' || echo "")
-          echo "old=$OLD_VERSION" >> "$GITHUB_OUTPUT"
-          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
+          LOCAL_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          PUBLISHED_VERSION=$(curl -s https://crates.io/api/v1/crates/ttail | jq -r '.crate.max_version // ""')
+          echo "local=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "published=$PUBLISHED_VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$LOCAL_VERSION" != "$PUBLISHED_VERSION" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
